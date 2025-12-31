@@ -1,0 +1,5 @@
+PyPDF2
+langchain-text-splitters
+transformers
+torch
+faiss-cpu
