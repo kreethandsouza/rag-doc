@@ -1,22 +1,26 @@
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-import torch
+import os
+from typing import List
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-GEN_MODEL_NAME = "google/flan-t5-base"
+load_dotenv()
 
-gen_tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL_NAME)
-gen_model = AutoModelForSeq2SeqLM.from_pretrained(GEN_MODEL_NAME)
-gen_model.eval()
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
+GEN_MODEL_NAME = "gemini-2.5-flash"
+model = genai.GenerativeModel(GEN_MODEL_NAME)
 
-def build_prompt(context_chunks, question):
+def build_prompt(context_chunks: List[str], question: str) -> str:
     """
-    Construct a grounded prompt for the LLM.
+    Construct a grounded RAG prompt.
     """
     context = "\n\n".join(context_chunks)
 
     prompt = f"""
-    Answer the question using ONLY the context below.
-    If the answer is not present in the context, say "I don't know".
+    You are a biology textbook assistant.
+
+    Answer the question using ONLY the information provided in the context.
+    If the answer is not explicitly present, say "I don't know".
 
     Context:
     {context}
@@ -24,44 +28,31 @@ def build_prompt(context_chunks, question):
     Question:
     {question}
 
-    Answer:
+    Answer (one clear sentence):
     """
     return prompt.strip()
 
 
-def generate_answer(context_chunks, question, max_tokens=256):
+def generate_answer(context_chunks: List[str], question: str) -> str:
     """
-    Generate an answer from retrieved chunks and a user query.
+    Generate an answer using Gemini grounded on retrieved context.
     """
     prompt = build_prompt(context_chunks, question)
 
-    inputs = gen_tokenizer(
+    response = model.generate_content(
         prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=1024
+        generation_config={
+            "temperature": 0.2,
+            "max_output_tokens": 256,
+        }
     )
 
-    with torch.no_grad():
-        outputs = gen_model.generate(
-            **inputs,
-            max_new_tokens=max_tokens
-        )
-
-    answer = gen_tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return answer
+    return response.text.strip()
 
 
 def run_rag(query, index, chunks, retrieve_fn, top_k=5):
     """
     End-to-end RAG execution.
-    
-    Args:
-        query (str): User question
-        index: FAISS index
-        chunks (list): Text chunks
-        retrieve_fn (callable): Retrieval function
-        top_k (int): Number of chunks to retrieve
     """
     retrieved_chunks = retrieve_fn(query, index, chunks, top_k=top_k)
 
@@ -69,7 +60,7 @@ def run_rag(query, index, chunks, retrieve_fn, top_k=5):
         context_chunks=retrieved_chunks,
         question=query
     )
-
+    
     return {
         "question": query,
         "context": retrieved_chunks,
@@ -78,7 +69,6 @@ def run_rag(query, index, chunks, retrieve_fn, top_k=5):
 
 
 if __name__ == "__main__":
-    # Import processing pipeline functions
     from processing_pipeline import (
         load_pdf_context,
         chunk_text,
@@ -92,7 +82,6 @@ if __name__ == "__main__":
     index = build_vector_store(chunks)
 
     # Step 2: Ask a question
-    # query = "What is the structure of the cell membrane?"
     query = "What is a molecule?"
 
     result = run_rag(
@@ -103,7 +92,6 @@ if __name__ == "__main__":
         top_k=5,
     )
 
-    # Step 3: Output
     print("\nQuestion:")
     print(result["question"])
 
